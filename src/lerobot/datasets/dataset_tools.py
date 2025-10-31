@@ -612,8 +612,6 @@ def _keep_episodes_from_video_with_av(
     v_out.height = v_in.codec_context.height
     v_out.pix_fmt = pix_fmt
 
-    # Set time_base to match the frame rate for proper timestamp handling.
-    v_out.time_base = Fraction(1, int(fps))
 
     out.start_encoding()
 
@@ -652,7 +650,6 @@ def _keep_episodes_from_video_with_av(
             # We need to create a copy to avoid modifying the original.
             new_frame = frame.reformat(width=v_out.width, height=v_out.height, format=v_out.pix_fmt)
             new_frame.pts = frame_count
-            new_frame.time_base = Fraction(1, int(fps))
 
             # Encode and mux the frame.
             for pkt in v_out.encode(new_frame):

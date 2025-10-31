@@ -445,16 +445,53 @@ def concatenate_video_files(
         tmp_output_video_path, mode="w", options={"movflags": "faststart"}
     )  # faststart is to move the metadata to the beginning of the file to speed up loading
 
-    # Replicate input streams in output container
     stream_map = {}
-    for input_stream in input_container.streams:
-        if input_stream.type in ("video", "audio", "subtitle"):  # only copy compatible streams
-            stream_map[input_stream.index] = output_container.add_stream_from_template(
-                template=input_stream, opaque=True
-            )
+    codec_mapping = {
+        "libdav1d": "libsvtav1",
+    }
 
-            # set the time base to the input stream time base (missing in the codec context)
-            stream_map[input_stream.index].time_base = input_stream.time_base
+    for input_stream in input_container.streams:
+        if input_stream.type not in ("video", "audio", "subtitle"):
+            continue
+
+        codec_name = getattr(input_stream.codec_context, "name", None)
+        rate = getattr(input_stream, "average_rate", None) or getattr(input_stream, "rate", None)
+
+        if codec_name is None:
+            logging.warning(f"Skipping stream {input_stream.index} with no codec name")
+            continue
+
+        final_codec_name = codec_mapping.get(codec_name, codec_name)
+
+        try:
+            output_stream = output_container.add_stream(final_codec_name, rate)
+            if final_codec_name != codec_name:
+                logging.info(f"Using '{final_codec_name}' instead of '{codec_name}' for stream {input_stream.index}")
+        except av.codec.codec.UnknownCodecError:
+            logging.warning(f"Unsupported codec '{codec_name}' for stream {input_stream.index}. Skipping stream.")
+            continue
+        except Exception as e:
+            logging.warning(f"Failed to create stream with codec '{codec_name}' for stream {input_stream.index}: {e}. Skipping stream.")
+            continue
+
+        if input_stream.type == "video":
+            output_stream.width = input_stream.width
+            output_stream.height = input_stream.height
+            try:
+                output_stream.pix_fmt = input_stream.pix_fmt
+            except Exception:
+                pass
+
+        try:
+            output_stream.time_base = input_stream.time_base
+        except Exception:
+            try:
+                if hasattr(output_stream.codec_context, 'time_base') and output_stream.codec_context.is_encoder:
+                    output_stream.codec_context.time_base = input_stream.time_base
+            except Exception:
+                logging.debug(f"Could not set time_base for stream {input_stream.index}")
+
+        stream_map[input_stream.index] = output_stream
 
     # Demux + remux packets (no re-encode)
     for packet in input_container.demux():
